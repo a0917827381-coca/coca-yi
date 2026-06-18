@@ -220,14 +220,14 @@ function startTimeFreeze(body, nextGua) {
     freezeTarget = body;
     freezeAlpha = 1.0;
     freezeText = `${body.label} 爻動 ➔ 突變【${nextGua}】卦！`;
-    engine.timing.timeScale = 0.02; 
+    engine.timing.timeScale = 0.01; 
 
     setTimeout(() => {
         engine.timing.timeScale = NORMAL_TIME_SCALE; 
         isTimeFrozen = false;
         applyThrustVector(body, nextGua);
         freezeTarget = null;
-    }, 600); 
+    }, 1200); 
 }
 
 function applyThrustVector(body, newGua) {
