@@ -16,14 +16,11 @@ const ARENA_RADIUS = 380;
 let baguaData = null;
 const baguaKeys = ["乾", "坤", "震", "巽", "坎", "離", "艮", "兌"];
 
-// 狀態機與玩家狀態包
 let p1State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false };
 let p2State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false };
 let gameState = "wait"; 
 
-// 【新增】碰撞計數器
 let collisionCount = 0; 
-
 let isTimeFrozen = false;
 let freezeTarget = null;
 let freezeText = "";
@@ -62,7 +59,7 @@ canvas.addEventListener('pointerdown', (e) => {
         p1State.upper = null; p1State.lower = null;
         p2State.upper = null; p2State.lower = null;
         particles = []; 
-        collisionCount = 0; // 重置碰撞計數
+        collisionCount = 0; 
         return; 
     }
 
@@ -129,7 +126,7 @@ function spawnTop(player, x, y, label) {
 
     if (p1State.body && !p1State.isShattered && p2State.body && !p2State.isShattered) {
         gameState = "battle";
-        collisionCount = 0; // 開戰時重置計數
+        collisionCount = 0; 
     }
 }
 
@@ -202,12 +199,8 @@ function setupCollisionListener() {
                 const speed = pair.collision.speed || 4;
                 const impulse = pair.collision.depth * speed;
 
-                // 只要發生實質碰撞就增加計數器
-                if (impulse > 1.0) {
-                    collisionCount++;
-                }
+                if (impulse > 1.0) collisionCount++;
 
-                // 劇烈碰撞觸發變卦特效
                 if (impulse > 2.5) { 
                     screenShake = 8; 
                     const targetBody = Math.random() > 0.5 ? pair.bodyA : pair.bodyB;
@@ -227,7 +220,6 @@ function startTimeFreeze(body, nextGua) {
     freezeTarget = body;
     freezeAlpha = 1.0;
     freezeText = `${body.label} 爻動 ➔ 突變【${nextGua}】卦！`;
-
     engine.timing.timeScale = 0.02; 
 
     setTimeout(() => {
@@ -250,49 +242,36 @@ function applyThrustVector(body, newGua) {
     const normDir = Matter.Vector.normalise(vectorToOpp);
 
     switch (newGua) {
-        case "震": 
-            Body.setVelocity(body, Matter.Vector.mult(normDir, 16));
-            Body.setAngularVelocity(body, 0.6); break;
+        case "震": Body.setVelocity(body, Matter.Vector.mult(normDir, 16)); Body.setAngularVelocity(body, 0.6); break;
         case "離": 
             const randomAngle = Math.random() * Math.PI * 2;
             Body.setVelocity(body, { x: Math.cos(randomAngle) * 12, y: Math.sin(randomAngle) * 12 });
             Body.setVelocity(opponent, Matter.Vector.mult(normDir, 10)); break;
-        case "艮": 
-            Body.setVelocity(body, { x: 0, y: 0 });
-            Body.setMass(body, body.mass * 4); break;
-        case "巽": 
-            Body.setAngularVelocity(body, 0.7);
-            body.frictionAir = 0.00001; break;
-        default: 
-            Body.setVelocity(body, Matter.Vector.mult(normDir, -8)); break;
+        case "艮": Body.setVelocity(body, { x: 0, y: 0 }); Body.setMass(body, body.mass * 4); break;
+        case "巽": Body.setAngularVelocity(body, 0.7); body.frictionAir = 0.00001; break;
+        default: Body.setVelocity(body, Matter.Vector.mult(normDir, -8)); break;
     }
 }
 
-// --- 7. 生存判定：結界保護系統與碎裂判定 ---
+// --- 7. 生存判定：結界保護與碎裂 ---
 function checkSurvival(player) {
     if (!player.body || player.isShattered) return;
 
     const pos = player.body.position;
     const distance = Math.hypot(pos.x - ARENA_CENTER.x, pos.y - ARENA_CENTER.y);
-    
-    // 【全新機制】判斷是否處於「等待對手」或「前三次碰撞」的保護期內
     let isProtected = (gameState === "wait") || (gameState === "battle" && collisionCount < 3);
 
-    // 如果在保護期內：鎖血、防滑出界、防停止
     if (isProtected) {
         if (distance > (ARENA_RADIUS - 60)) {
-            // 產生一股將陀螺強力推回競技場中心的結界反彈力
             const pushToCenter = Matter.Vector.normalise({ x: ARENA_CENTER.x - pos.x, y: ARENA_CENTER.y - pos.y });
             Matter.Body.setVelocity(player.body, Matter.Vector.mult(pushToCenter, 8)); 
         }
         if (Math.abs(player.body.angularVelocity) < 0.05) {
-            // 強制補充旋轉動能，維持熱身狀態
             Matter.Body.setAngularVelocity(player.body, player.body.angularVelocity >= 0 ? 0.2 : -0.2);
         }
-        return; // 在保護期內絕對不會觸發死亡碎裂
+        return; 
     }
 
-    // 突破保護期後，開始執行死亡判定
     let isOut = distance > (ARENA_RADIUS - 40);
     let isStopped = false;
 
@@ -314,6 +293,7 @@ function checkSurvival(player) {
         World.remove(engine.world, loserObj.body); 
         loserObj.body = null;
 
+        // 【更新勝者強化機制】拔除阻力，為接下來的中心吸附做準備
         if (winnerObj.body) {
             winnerObj.body.frictionAir = 0;
             winnerObj.body.friction = 0;
@@ -323,7 +303,7 @@ function checkSurvival(player) {
     }
 }
 
-// --- 8. 渲染引擎 ---
+// --- 8. 渲染引擎與勝者太極吸附邏輯 ---
 function drawGame() {
     Engine.update(engine, 1000 / 60);
 
@@ -332,9 +312,31 @@ function drawGame() {
         checkSurvival(p2State);
     }
 
+    // 【新增：萬物歸一，勝者中心吸附邏輯】
     if (gameState === "ending" || gameState === "p1_win" || gameState === "p2_win") {
-        if (p1State.body && !p1State.isShattered) Matter.Body.setAngularVelocity(p1State.body, 0.4);
-        if (p2State.body && !p2State.isShattered) Matter.Body.setAngularVelocity(p2State.body, 0.4);
+        let winnerObj = null;
+        if (p1State.body && !p1State.isShattered) winnerObj = p1State;
+        if (p2State.body && !p2State.isShattered) winnerObj = p2State;
+
+        if (winnerObj && winnerObj.body) {
+            // 1. 強制維持優雅自轉
+            Matter.Body.setAngularVelocity(winnerObj.body, 0.35);
+            
+            // 2. 緩慢減弱線性速度 (讓它不要亂飛)
+            let v = winnerObj.body.velocity;
+            Matter.Body.setVelocity(winnerObj.body, { x: v.x * 0.95, y: v.y * 0.95 });
+
+            // 3. 施加太極向心力 (如果偏離中心，緩緩把它吸回去)
+            let pos = winnerObj.body.position;
+            let distToCenter = Math.hypot(ARENA_CENTER.x - pos.x, ARENA_CENTER.y - pos.y);
+            
+            if (distToCenter > 5) {
+                let pullVector = Matter.Vector.normalise({ x: ARENA_CENTER.x - pos.x, y: ARENA_CENTER.y - pos.y });
+                // 距離越遠吸力越強，但整體保持平緩優雅
+                let pullForce = Math.min(distToCenter * 0.0005, 0.05); 
+                Matter.Body.applyForce(winnerObj.body, pos, Matter.Vector.mult(pullVector, pullForce));
+            }
+        }
     }
 
     ctx.save(); 
@@ -467,7 +469,6 @@ function drawUI() {
     else p2Txt = p2State.upper ? `已選上卦【${p2State.upper}】，再點選下卦` : "【P2 陣地】下半部雙擊起卦...";
     ctx.fillText(p2Txt, 400, canvas.height - 40);
 
-    // 【新增】如果還在保護期內，顯示交鋒倒數計時
     if (gameState === "battle" && collisionCount < 3) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
         ctx.font = "bold 24px sans-serif";
