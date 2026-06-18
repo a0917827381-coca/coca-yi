@@ -16,9 +16,12 @@ const ARENA_RADIUS = 380;
 let baguaData = null;
 const baguaKeys = ["乾", "坤", "震", "巽", "坎", "離", "艮", "兌"];
 
-let p1State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false };
-let p2State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false };
-let gameState = "wait"; 
+// 新增 countdown 狀態與倒數計時器
+let p1State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false, origFrictionAir: 0 };
+let p2State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false, origFrictionAir: 0 };
+let gameState = "wait"; // wait -> countdown -> battle -> ending -> win
+let countdownTimer = 3;
+let countdownInterval = null;
 
 let collisionCount = 0; 
 let isTimeFrozen = false;
@@ -54,6 +57,9 @@ function initGame() {
 canvas.addEventListener('pointerdown', (e) => {
     if (!baguaData) return;
 
+    // 倒數或展演期間禁止操作
+    if (gameState === "countdown" || gameState === "ending") return;
+
     if (gameState === "p1_win" || gameState === "p2_win") {
         gameState = "wait";
         p1State.upper = null; p1State.lower = null;
@@ -69,10 +75,11 @@ canvas.addEventListener('pointerdown', (e) => {
     const mouseX = (e.clientX - rect.left) * scaleX;
     const mouseY = (e.clientY - rect.top) * scaleY;
 
+    // 將生成位置推至最邊緣 (Y: 100 與 Y: 700)
     if (mouseY < 400) {
-        handlePlayerInput(p1State, 400, 150, "P1"); 
+        handlePlayerInput(p1State, 400, 100, "P1"); 
     } else {
-        handlePlayerInput(p2State, 400, 650, "P2"); 
+        handlePlayerInput(p2State, 400, 700, "P2"); 
     }
 });
 
@@ -107,15 +114,16 @@ function spawnTop(player, x, y, label) {
     Body.setMass(topBody, lo.mass * 2.0); 
     topBody.restitution = Math.max(lo.restitution + 0.3, 0.9); 
     topBody.friction = 0.01; 
-    topBody.frictionAir = up.frictionAir * 0.15; 
-
-    Body.setAngularVelocity(topBody, up.angularVelocity * 3.5); 
     
-    const angleToCenter = Math.atan2(ARENA_CENTER.y - y, ARENA_CENTER.x - x);
-    Body.setVelocity(topBody, {
-        x: Math.cos(angleToCenter) * 10, 
-        y: Math.sin(angleToCenter) * 10
-    });
+    // 記錄真實空氣阻力，但在等待期設為 0 以維持完美空轉
+    player.origFrictionAir = up.frictionAir * 0.15;
+    topBody.frictionAir = 0; 
+
+    // 給予極高的空轉速度 (蓄力感)
+    Body.setAngularVelocity(topBody, up.angularVelocity * 4.5); 
+    
+    // 【修改】不給予線性速度，鎖定在原地
+    Body.setVelocity(topBody, { x: 0, y: 0 });
 
     player.body = topBody;
     player.currentUpper = player.upper;
@@ -124,10 +132,46 @@ function spawnTop(player, x, y, label) {
 
     World.add(engine.world, topBody);
 
+    // 當雙方都已準備好，進入倒數階段
     if (p1State.body && !p1State.isShattered && p2State.body && !p2State.isShattered) {
-        gameState = "battle";
-        collisionCount = 0; 
+        startCountdown();
     }
+}
+
+// 【新增】倒數計時與對衝發射機制
+function startCountdown() {
+    gameState = "countdown";
+    countdownTimer = 3;
+    
+    countdownInterval = setInterval(() => {
+        countdownTimer--;
+        
+        if (countdownTimer <= 0) {
+            clearInterval(countdownInterval);
+            gameState = "battle";
+            collisionCount = 0;
+            
+            // 倒數結束，雙方恢復真實阻力並朝中央強烈對衝
+            launchTop(p1State, 400, 100);
+            launchTop(p2State, 400, 700);
+        }
+    }, 1000);
+}
+
+function launchTop(player, spawnX, spawnY) {
+    if (!player.body) return;
+    
+    // 恢復該卦象真實的空氣阻力
+    player.body.frictionAir = player.origFrictionAir;
+    
+    // 計算朝向競技場中心的發射角度
+    const angleToCenter = Math.atan2(ARENA_CENTER.y - spawnY, ARENA_CENTER.x - spawnX);
+    
+    // 給予極大的初始進場爆發力
+    Body.setVelocity(player.body, {
+        x: Math.cos(angleToCenter) * 16, 
+        y: Math.sin(angleToCenter) * 16
+    });
 }
 
 // --- 5. 特效系統：產生碎裂粒子 ---
@@ -136,14 +180,10 @@ function createShatterEffect(x, y, colorStr) {
     for (let i = 0; i < 80; i++) {
         particles.push({
             x: x, y: y,
-            vx: (Math.random() - 0.5) * 35, 
-            vy: (Math.random() - 0.5) * 35,
-            size: Math.random() * 18 + 4,
-            color: colorStr,
-            life: 1.0,
-            decay: Math.random() * 0.02 + 0.015,
-            angle: Math.random() * Math.PI * 2,
-            vAngle: (Math.random() - 0.5) * 0.8,
+            vx: (Math.random() - 0.5) * 35, vy: (Math.random() - 0.5) * 35,
+            size: Math.random() * 18 + 4, color: colorStr,
+            life: 1.0, decay: Math.random() * 0.02 + 0.015,
+            angle: Math.random() * Math.PI * 2, vAngle: (Math.random() - 0.5) * 0.8,
             type: Math.random() > 0.6 ? 'spark' : 'shard' 
         });
     }
@@ -152,35 +192,20 @@ function createShatterEffect(x, y, colorStr) {
 function updateAndDrawParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
         let p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.angle += p.vAngle;
-        p.life -= p.decay;
-        p.vx *= 0.92;
-        p.vy *= 0.92;
+        p.x += p.vx; p.y += p.vy; p.angle += p.vAngle; p.life -= p.decay;
+        p.vx *= 0.92; p.vy *= 0.92;
 
-        if (p.life <= 0) {
-            particles.splice(i, 1);
-            continue;
-        }
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
 
         ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-        ctx.globalAlpha = p.life;
-
+        ctx.translate(p.x, p.y); ctx.rotate(p.angle); ctx.globalAlpha = p.life;
         if (p.type === 'spark') {
-            ctx.fillStyle = "#ffcc00"; 
-            ctx.globalCompositeOperation = "lighter";
+            ctx.fillStyle = "#ffcc00"; ctx.globalCompositeOperation = "lighter";
             ctx.beginPath(); ctx.arc(0, 0, p.size * 0.4, 0, Math.PI * 2); ctx.fill();
         } else {
-            ctx.fillStyle = p.color; 
-            ctx.beginPath();
-            ctx.moveTo(0, -p.size);
-            ctx.lineTo(p.size, p.size);
-            ctx.lineTo(-p.size, p.size);
-            ctx.closePath();
-            ctx.fill();
+            ctx.fillStyle = p.color; ctx.beginPath();
+            ctx.moveTo(0, -p.size); ctx.lineTo(p.size, p.size); ctx.lineTo(-p.size, p.size);
+            ctx.closePath(); ctx.fill();
         }
         ctx.restore();
     }
@@ -220,14 +245,14 @@ function startTimeFreeze(body, nextGua) {
     freezeTarget = body;
     freezeAlpha = 1.0;
     freezeText = `${body.label} 爻動 ➔ 突變【${nextGua}】卦！`;
-    engine.timing.timeScale = 0.1; // 套用你修改的 0.1
+    engine.timing.timeScale = 0.1; 
 
     setTimeout(() => {
         engine.timing.timeScale = NORMAL_TIME_SCALE; 
         isTimeFrozen = false;
         applyThrustVector(body, nextGua);
         freezeTarget = null;
-    }, 1200); // 套用你修改的 1200ms
+    }, 1200); 
 }
 
 function applyThrustVector(body, newGua) {
@@ -253,13 +278,25 @@ function applyThrustVector(body, newGua) {
     }
 }
 
-// --- 7. 生存判定：結界保護與碎裂 ---
+// --- 7. 生存判定：防滑偏移與死鬥判定 ---
 function checkSurvival(player) {
     if (!player.body || player.isShattered) return;
 
+    // 【修改】在等待與倒數期間，強制鎖死座標，防止受到碰撞擠壓產生微幅滑動
+    if (gameState === "wait" || gameState === "countdown") {
+        let spawnY = player === p1State ? 100 : 700;
+        Matter.Body.setPosition(player.body, { x: 400, y: spawnY });
+        Matter.Body.setVelocity(player.body, { x: 0, y: 0 });
+        // 維持蓄力旋轉不掉速
+        if (Math.abs(player.body.angularVelocity) < 0.2) {
+            Matter.Body.setAngularVelocity(player.body, player.body.angularVelocity >= 0 ? 0.3 : -0.3);
+        }
+        return;
+    }
+
     const pos = player.body.position;
     const distance = Math.hypot(pos.x - ARENA_CENTER.x, pos.y - ARENA_CENTER.y);
-    let isProtected = (gameState === "wait") || (gameState === "battle" && collisionCount < 3);
+    let isProtected = (gameState === "battle" && collisionCount < 3);
 
     if (isProtected) {
         if (distance > (ARENA_RADIUS - 60)) {
@@ -412,9 +449,7 @@ function drawGame() {
             ctx.fillStyle = "#ffffff"; ctx.fill();
         }
 
-        // 【雙向文字：修正陀螺上方的掛名文字旋轉】
         ctx.rotate(-body.angle);
-        // 如果是 P1 (上方的玩家)，將文字再次旋轉 180 度面向他
         if (body.label === "P1") {
             ctx.rotate(Math.PI);
         }
@@ -430,7 +465,6 @@ function drawGame() {
 
     updateAndDrawParticles();
 
-    // 【雙向文字：突變時空凝結文字雙向渲染】
     if (isTimeFrozen && freezeTarget) {
         ctx.save();
         ctx.font = "bold 56px serif";
@@ -440,18 +474,8 @@ function drawGame() {
         ctx.shadowColor = "rgba(241, 196, 15, 0.6)";
         ctx.shadowBlur = 15;
         
-        // 畫給上方的 P1 看
-        ctx.save();
-        ctx.translate(400, 250);
-        ctx.rotate(Math.PI);
-        ctx.fillText(freezeText, 0, 0);
-        ctx.restore();
-
-        // 畫給下方的 P2 看
-        ctx.save();
-        ctx.translate(400, 550);
-        ctx.fillText(freezeText, 0, 0);
-        ctx.restore();
+        ctx.save(); ctx.translate(400, 250); ctx.rotate(Math.PI); ctx.fillText(freezeText, 0, 0); ctx.restore();
+        ctx.save(); ctx.translate(400, 550); ctx.fillText(freezeText, 0, 0); ctx.restore();
 
         ctx.restore();
         freezeAlpha -= 0.012; 
@@ -463,44 +487,47 @@ function drawGame() {
     requestAnimationFrame(drawGame);
 }
 
-// 【雙向文字：全面重構的 UI 渲染邏輯】
 function drawUI() {
     ctx.fillStyle = isTimeFrozen ? "#888" : "#aaaaaa";
     ctx.font = "bold 18px sans-serif";
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle"; // 統一定義基準點，方便旋轉對齊
+    ctx.textBaseline = "middle";
     
-    // P1 UI 文字 (旋轉 180 度面向螢幕上方)
-    let p1Txt = "";
-    if (p1State.isShattered) p1Txt = "【P1 陣地】已碎裂崩解";
-    else if (p1State.body) p1Txt = `【P1 陣地】正在對戰: ${p1State.currentUpper}${p1State.currentLower}`;
-    else p1Txt = p1State.upper ? `已選上卦【${p1State.upper}】，再點選下卦` : "【P1 陣地】上半部雙擊起卦...";
-    
-    ctx.save();
-    ctx.translate(400, 40);
-    ctx.rotate(Math.PI);
-    ctx.fillText(p1Txt, 0, 0);
-    ctx.restore();
+    // P1 UI 文字 (若在倒數或戰鬥中，隱藏提示)
+    if (gameState === "wait") {
+        let p1Txt = p1State.body ? "等待對手起卦..." : (p1State.upper ? `已選上卦【${p1State.upper}】，再點選下卦` : "【P1 陣地】上半部雙擊起卦...");
+        ctx.save(); ctx.translate(400, 40); ctx.rotate(Math.PI); ctx.fillText(p1Txt, 0, 0); ctx.restore();
+    }
 
-    // P2 UI 文字 (正常面向螢幕下方)
-    let p2Txt = "";
-    if (p2State.isShattered) p2Txt = "【P2 陣地】已碎裂崩解";
-    else if (p2State.body) p2Txt = `【P2 陣地】正在對戰: ${p2State.currentUpper}${p2State.currentLower}`;
-    else p2Txt = p2State.upper ? `已選上卦【${p2State.upper}】，再點選下卦` : "【P2 陣地】下半部雙擊起卦...";
-    
-    ctx.fillText(p2Txt, 400, canvas.height - 40);
+    // P2 UI 文字
+    if (gameState === "wait") {
+        let p2Txt = p2State.body ? "等待對手起卦..." : (p2State.upper ? `已選上卦【${p2State.upper}】，再點選下卦` : "【P2 陣地】下半部雙擊起卦...");
+        ctx.fillText(p2Txt, 400, canvas.height - 40);
+    }
 
-    // 試探交鋒期提示 (上下各畫一次)
+    // 【新增】倒數計時巨型文字渲染
+    if (gameState === "countdown") {
+        let displayTxt = countdownTimer > 0 ? countdownTimer : "GO!";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.font = "bold 120px sans-serif";
+        ctx.shadowColor = "rgba(0, 0, 0, 0.8)";
+        ctx.shadowBlur = 20;
+
+        // 雙向顯示給 P1 和 P2 
+        ctx.save(); ctx.translate(400, 250); ctx.rotate(Math.PI); ctx.fillText(displayTxt, 0, 0); ctx.restore();
+        ctx.fillText(displayTxt, 400, 550);
+        
+        ctx.shadowColor = "transparent";
+    }
+
     if (gameState === "battle" && collisionCount < 3) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
         ctx.font = "bold 24px sans-serif";
         let countdownTxt = `試探交鋒期：剩餘 ${3 - collisionCount} 次`;
-        
-        ctx.save(); ctx.translate(400, 200); ctx.rotate(Math.PI); ctx.fillText(countdownTxt, 0, 0); ctx.restore(); // P1
-        ctx.fillText(countdownTxt, 400, 600); // P2
+        ctx.save(); ctx.translate(400, 200); ctx.rotate(Math.PI); ctx.fillText(countdownTxt, 0, 0); ctx.restore();
+        ctx.fillText(countdownTxt, 400, 600);
     }
 
-    // 勝負結算畫面 (完全鏡像對稱)
     if (gameState === "p1_win" || gameState === "p2_win") {
         ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -508,27 +535,16 @@ function drawUI() {
         let winText = (gameState === "p1_win") ? "上陣 (P1) 勝利！" : "下陣 (P2) 勝利！";
         let winColor = (gameState === "p1_win") ? "#e74c3c" : "#3498db";
         
-        // P1 視角 (螢幕上半部)
         ctx.save();
-        ctx.translate(400, 250);
-        ctx.rotate(Math.PI);
-        ctx.font = "bold 72px sans-serif";
-        ctx.fillStyle = winColor;
-        ctx.fillText(winText, 0, 0);
-        ctx.font = "24px sans-serif";
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText("點擊螢幕任何位置重新起卦", 0, 80);
+        ctx.translate(400, 250); ctx.rotate(Math.PI);
+        ctx.font = "bold 72px sans-serif"; ctx.fillStyle = winColor; ctx.fillText(winText, 0, 0);
+        ctx.font = "24px sans-serif"; ctx.fillStyle = "#ffffff"; ctx.fillText("點擊螢幕任何位置重新起卦", 0, 80);
         ctx.restore();
 
-        // P2 視角 (螢幕下半部)
         ctx.save();
         ctx.translate(400, 550);
-        ctx.font = "bold 72px sans-serif";
-        ctx.fillStyle = winColor;
-        ctx.fillText(winText, 0, 0);
-        ctx.font = "24px sans-serif";
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText("點擊螢幕任何位置重新起卦", 0, 80);
+        ctx.font = "bold 72px sans-serif"; ctx.fillStyle = winColor; ctx.fillText(winText, 0, 0);
+        ctx.font = "24px sans-serif"; ctx.fillStyle = "#ffffff"; ctx.fillText("點擊螢幕任何位置重新起卦", 0, 80);
         ctx.restore();
     }
 }
