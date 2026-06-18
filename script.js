@@ -220,14 +220,14 @@ function startTimeFreeze(body, nextGua) {
     freezeTarget = body;
     freezeAlpha = 1.0;
     freezeText = `${body.label} 爻動 ➔ 突變【${nextGua}】卦！`;
-    engine.timing.timeScale = 0.01; 
+    engine.timing.timeScale = 0.1; // 套用你修改的 0.1
 
     setTimeout(() => {
         engine.timing.timeScale = NORMAL_TIME_SCALE; 
         isTimeFrozen = false;
         applyThrustVector(body, nextGua);
         freezeTarget = null;
-    }, 1200); 
+    }, 1200); // 套用你修改的 1200ms
 }
 
 function applyThrustVector(body, newGua) {
@@ -293,7 +293,6 @@ function checkSurvival(player) {
         World.remove(engine.world, loserObj.body); 
         loserObj.body = null;
 
-        // 【更新勝者強化機制】拔除阻力，為接下來的中心吸附做準備
         if (winnerObj.body) {
             winnerObj.body.frictionAir = 0;
             winnerObj.body.friction = 0;
@@ -303,7 +302,7 @@ function checkSurvival(player) {
     }
 }
 
-// --- 8. 渲染引擎與勝者太極吸附邏輯 ---
+// --- 8. 渲染引擎 ---
 function drawGame() {
     Engine.update(engine, 1000 / 60);
 
@@ -312,27 +311,19 @@ function drawGame() {
         checkSurvival(p2State);
     }
 
-    // 【新增：萬物歸一，勝者中心吸附邏輯】
     if (gameState === "ending" || gameState === "p1_win" || gameState === "p2_win") {
         let winnerObj = null;
         if (p1State.body && !p1State.isShattered) winnerObj = p1State;
         if (p2State.body && !p2State.isShattered) winnerObj = p2State;
 
         if (winnerObj && winnerObj.body) {
-            // 1. 強制維持優雅自轉
             Matter.Body.setAngularVelocity(winnerObj.body, 0.35);
-            
-            // 2. 緩慢減弱線性速度 (讓它不要亂飛)
             let v = winnerObj.body.velocity;
             Matter.Body.setVelocity(winnerObj.body, { x: v.x * 0.95, y: v.y * 0.95 });
-
-            // 3. 施加太極向心力 (如果偏離中心，緩緩把它吸回去)
             let pos = winnerObj.body.position;
             let distToCenter = Math.hypot(ARENA_CENTER.x - pos.x, ARENA_CENTER.y - pos.y);
-            
             if (distToCenter > 5) {
                 let pullVector = Matter.Vector.normalise({ x: ARENA_CENTER.x - pos.x, y: ARENA_CENTER.y - pos.y });
-                // 距離越遠吸力越強，但整體保持平緩優雅
                 let pullForce = Math.min(distToCenter * 0.0005, 0.05); 
                 Matter.Body.applyForce(winnerObj.body, pos, Matter.Vector.mult(pullVector, pullForce));
             }
@@ -421,7 +412,12 @@ function drawGame() {
             ctx.fillStyle = "#ffffff"; ctx.fill();
         }
 
+        // 【雙向文字：修正陀螺上方的掛名文字旋轉】
         ctx.rotate(-body.angle);
+        // 如果是 P1 (上方的玩家)，將文字再次旋轉 180 度面向他
+        if (body.label === "P1") {
+            ctx.rotate(Math.PI);
+        }
         ctx.fillStyle = "#ffffff";
         ctx.font = "bold 32px sans-serif"; 
         ctx.textAlign = "center";
@@ -434,14 +430,29 @@ function drawGame() {
 
     updateAndDrawParticles();
 
+    // 【雙向文字：突變時空凝結文字雙向渲染】
     if (isTimeFrozen && freezeTarget) {
         ctx.save();
         ctx.font = "bold 56px serif";
         ctx.fillStyle = `rgba(255, 255, 255, ${freezeAlpha})`;
         ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
         ctx.shadowColor = "rgba(241, 196, 15, 0.6)";
         ctx.shadowBlur = 15;
-        ctx.fillText(freezeText, 400, 200);
+        
+        // 畫給上方的 P1 看
+        ctx.save();
+        ctx.translate(400, 250);
+        ctx.rotate(Math.PI);
+        ctx.fillText(freezeText, 0, 0);
+        ctx.restore();
+
+        // 畫給下方的 P2 看
+        ctx.save();
+        ctx.translate(400, 550);
+        ctx.fillText(freezeText, 0, 0);
+        ctx.restore();
+
         ctx.restore();
         freezeAlpha -= 0.012; 
     }
@@ -452,47 +463,72 @@ function drawGame() {
     requestAnimationFrame(drawGame);
 }
 
+// 【雙向文字：全面重構的 UI 渲染邏輯】
 function drawUI() {
     ctx.fillStyle = isTimeFrozen ? "#888" : "#aaaaaa";
     ctx.font = "bold 18px sans-serif";
     ctx.textAlign = "center";
+    ctx.textBaseline = "middle"; // 統一定義基準點，方便旋轉對齊
     
+    // P1 UI 文字 (旋轉 180 度面向螢幕上方)
     let p1Txt = "";
     if (p1State.isShattered) p1Txt = "【P1 陣地】已碎裂崩解";
     else if (p1State.body) p1Txt = `【P1 陣地】正在對戰: ${p1State.currentUpper}${p1State.currentLower}`;
     else p1Txt = p1State.upper ? `已選上卦【${p1State.upper}】，再點選下卦` : "【P1 陣地】上半部雙擊起卦...";
-    ctx.fillText(p1Txt, 400, 40);
+    
+    ctx.save();
+    ctx.translate(400, 40);
+    ctx.rotate(Math.PI);
+    ctx.fillText(p1Txt, 0, 0);
+    ctx.restore();
 
+    // P2 UI 文字 (正常面向螢幕下方)
     let p2Txt = "";
     if (p2State.isShattered) p2Txt = "【P2 陣地】已碎裂崩解";
     else if (p2State.body) p2Txt = `【P2 陣地】正在對戰: ${p2State.currentUpper}${p2State.currentLower}`;
     else p2Txt = p2State.upper ? `已選上卦【${p2State.upper}】，再點選下卦` : "【P2 陣地】下半部雙擊起卦...";
+    
     ctx.fillText(p2Txt, 400, canvas.height - 40);
 
+    // 試探交鋒期提示 (上下各畫一次)
     if (gameState === "battle" && collisionCount < 3) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
         ctx.font = "bold 24px sans-serif";
-        ctx.fillText(`試探交鋒期：剩餘 ${3 - collisionCount} 次`, 400, 100);
+        let countdownTxt = `試探交鋒期：剩餘 ${3 - collisionCount} 次`;
+        
+        ctx.save(); ctx.translate(400, 200); ctx.rotate(Math.PI); ctx.fillText(countdownTxt, 0, 0); ctx.restore(); // P1
+        ctx.fillText(countdownTxt, 400, 600); // P2
     }
 
+    // 勝負結算畫面 (完全鏡像對稱)
     if (gameState === "p1_win" || gameState === "p2_win") {
         ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
+        let winText = (gameState === "p1_win") ? "上陣 (P1) 勝利！" : "下陣 (P2) 勝利！";
+        let winColor = (gameState === "p1_win") ? "#e74c3c" : "#3498db";
+        
+        // P1 視角 (螢幕上半部)
+        ctx.save();
+        ctx.translate(400, 250);
+        ctx.rotate(Math.PI);
         ctx.font = "bold 72px sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        
-        if (gameState === "p1_win") {
-            ctx.fillStyle = "#e74c3c";
-            ctx.fillText("上陣 (P1) 勝利！", 400, 360);
-        } else {
-            ctx.fillStyle = "#3498db";
-            ctx.fillText("下陣 (P2) 勝利！", 400, 360);
-        }
-        
+        ctx.fillStyle = winColor;
+        ctx.fillText(winText, 0, 0);
         ctx.font = "24px sans-serif";
         ctx.fillStyle = "#ffffff";
-        ctx.fillText("點擊螢幕任何位置重新起卦", 400, 450);
+        ctx.fillText("點擊螢幕任何位置重新起卦", 0, 80);
+        ctx.restore();
+
+        // P2 視角 (螢幕下半部)
+        ctx.save();
+        ctx.translate(400, 550);
+        ctx.font = "bold 72px sans-serif";
+        ctx.fillStyle = winColor;
+        ctx.fillText(winText, 0, 0);
+        ctx.font = "24px sans-serif";
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText("點擊螢幕任何位置重新起卦", 0, 80);
+        ctx.restore();
     }
 }
