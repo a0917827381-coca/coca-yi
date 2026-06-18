@@ -1,7 +1,7 @@
 // --- 1. 初始化 Matter.js 模組 ---
 const { Engine, World, Bodies, Body, Composite } = Matter;
-const engine = Engine.create({ gravity: { x: 0, y: 0 } }); // 俯視角，重力為 0
-const NORMAL_TIME_SCALE = 0.8; // 全局降速，增加戰鬥的沉重感與可視度
+const engine = Engine.create({ gravity: { x: 0, y: 0 } }); 
+const NORMAL_TIME_SCALE = 0.8; 
 engine.timing.timeScale = NORMAL_TIME_SCALE;
 
 // --- 2. 畫布與變數設定 ---
@@ -16,18 +16,17 @@ const ARENA_RADIUS = 380;
 let baguaData = null;
 const baguaKeys = ["乾", "坤", "震", "巽", "坎", "離", "艮", "兌"];
 
-// 玩家與遊戲狀態包
+// 新增狀態機階段：wait, battle, ending(3秒展演), p1_win, p2_win
 let p1State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isFallen: false };
 let p2State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isFallen: false };
-let gameState = "wait"; // 狀態機：wait, battle, p1_win, p2_win
+let gameState = "wait"; 
 
-// 時空凝結控制狀態
 let isTimeFrozen = false;
 let freezeTarget = null;
 let freezeText = "";
 let freezeAlpha = 1.0;
 
-// --- 3. 非同步載入八卦 JSON 資料檔 ---
+// --- 3. 非同步載入八卦 JSON ---
 fetch('bagua.json')
     .then(response => response.json())
     .then(data => {
@@ -44,7 +43,6 @@ function initGame() {
         Bodies.rectangle(-10, 400, 20, 800, wallOptions),
         Bodies.rectangle(810, 400, 20, 800, wallOptions)
     ]);
-
     setupCollisionListener();
     requestAnimationFrame(drawGame);
 }
@@ -53,7 +51,6 @@ function initGame() {
 canvas.addEventListener('pointerdown', (e) => {
     if (!baguaData) return;
 
-    // 如果已經分出勝負，點擊一次用來清理畫面並重置起卦狀態
     if (gameState === "p1_win" || gameState === "p2_win") {
         gameState = "wait";
         p1State.upper = null; p1State.lower = null;
@@ -78,7 +75,6 @@ function handlePlayerInput(player, spawnX, spawnY, label) {
     if (player.body && !player.isFallen) return; 
 
     const randomGua = baguaKeys[Math.floor(Math.random() * baguaKeys.length)];
-
     if (!player.upper) {
         player.upper = randomGua;
     } else if (!player.lower) {
@@ -94,7 +90,7 @@ function spawnTop(player, x, y, label) {
 
     const up = baguaData[player.upper].upper;
     const lo = baguaData[player.lower].lower;
-    const radius = 48; // 【大幅增加陀螺體積】從 32 提升至 48
+    const radius = 48; 
 
     let topBody;
     if (up.sides === 0) {
@@ -103,17 +99,18 @@ function spawnTop(player, x, y, label) {
         topBody = Bodies.polygon(x, y, up.sides, radius, { label: label });
     }
 
-    Body.setMass(topBody, lo.mass * 1.5); // 整體質量放大，避免像塑膠玩具
-    topBody.restitution = lo.restitution;
-    topBody.friction = lo.friction;
-    topBody.frictionAir = up.frictionAir;
+    // 【修改屬性參數】大幅降低摩擦力、提高彈性、放大初速
+    Body.setMass(topBody, lo.mass * 1.5); 
+    topBody.restitution = Math.max(lo.restitution + 0.3, 0.9); // 強制提高彈性，保證多次碰撞
+    topBody.friction = 0.01; // 極低表面摩擦，避免撞擊後卡死
+    topBody.frictionAir = up.frictionAir * 0.15; // 空氣阻力削減 85%，延長戰鬥至 5 秒以上
 
-    Body.setAngularVelocity(topBody, up.angularVelocity);
+    Body.setAngularVelocity(topBody, up.angularVelocity * 3.5); // 初始轉速放大 3.5 倍
     
     const angleToCenter = Math.atan2(ARENA_CENTER.y - y, ARENA_CENTER.x - x);
     Body.setVelocity(topBody, {
-        x: Math.cos(angleToCenter) * 3.5, // 降低初始暴衝速度
-        y: Math.sin(angleToCenter) * 3.5
+        x: Math.cos(angleToCenter) * 10, // 提高進場暴衝速度
+        y: Math.sin(angleToCenter) * 10
     });
 
     player.body = topBody;
@@ -123,7 +120,6 @@ function spawnTop(player, x, y, label) {
 
     World.add(engine.world, topBody);
 
-    // 雙方都存活且在場上時，進入戰鬥狀態
     if (p1State.body && !p1State.isFallen && p2State.body && !p2State.isFallen) {
         gameState = "battle";
     }
@@ -142,7 +138,7 @@ function setupCollisionListener() {
                 const speed = pair.collision.speed || 4;
                 const impulse = pair.collision.depth * speed;
 
-                if (impulse > 1.8) { // 提高變卦閾值，減少頻繁的暫停
+                if (impulse > 2.5) { 
                     const targetBody = Math.random() > 0.5 ? pair.bodyA : pair.bodyB;
                     const targetState = (targetBody.label === "P1") ? p1State : p2State;
                     if (!targetState.isFallen) {
@@ -161,12 +157,11 @@ function startTimeFreeze(body, nextGua) {
     freezeAlpha = 1.0;
     freezeText = `${body.label} 爻動 ➔ 突變【${nextGua}】卦！`;
 
-    engine.timing.timeScale = 0.02; // 極致的子彈時間
+    engine.timing.timeScale = 0.02; 
 
     setTimeout(() => {
-        engine.timing.timeScale = NORMAL_TIME_SCALE; // 恢復我們設定的較慢全局速度
+        engine.timing.timeScale = NORMAL_TIME_SCALE; 
         isTimeFrozen = false;
-        
         applyThrustVector(body, nextGua);
         freezeTarget = null;
     }, 600); 
@@ -185,29 +180,29 @@ function applyThrustVector(body, newGua) {
 
     switch (newGua) {
         case "震": 
-            Body.setVelocity(body, Matter.Vector.mult(normDir, 12));
-            Body.setAngularVelocity(body, 0.45);
+            Body.setVelocity(body, Matter.Vector.mult(normDir, 16));
+            Body.setAngularVelocity(body, 0.6);
             break;
         case "離": 
             const randomAngle = Math.random() * Math.PI * 2;
-            Body.setVelocity(body, { x: Math.cos(randomAngle) * 9, y: Math.sin(randomAngle) * 9 });
-            Body.setVelocity(opponent, Matter.Vector.mult(normDir, 7)); 
+            Body.setVelocity(body, { x: Math.cos(randomAngle) * 12, y: Math.sin(randomAngle) * 12 });
+            Body.setVelocity(opponent, Matter.Vector.mult(normDir, 10)); 
             break;
         case "艮": 
             Body.setVelocity(body, { x: 0, y: 0 });
             Body.setMass(body, body.mass * 4);
             break;
         case "巽": 
-            Body.setAngularVelocity(body, 0.5);
-            body.frictionAir = 0.0001;
+            Body.setAngularVelocity(body, 0.7);
+            body.frictionAir = 0.00001;
             break;
         default: 
-            Body.setVelocity(body, Matter.Vector.mult(normDir, -5));
+            Body.setVelocity(body, Matter.Vector.mult(normDir, -8));
             break;
     }
 }
 
-// --- 6. 生存模式判定：勝負結算觸發器 ---
+// --- 6. 生存模式判定：新增勝利鎖定展演 (ending) ---
 function checkSurvival(player) {
     if (!player.body) return;
 
@@ -216,29 +211,42 @@ function checkSurvival(player) {
     let isOut = distance > ARENA_RADIUS;
     let isStopped = false;
 
+    // 只有在 battle 狀態下才會判定力竭
     if (gameState === "battle" && p1State.body && p2State.body && !player.isFallen) {
         if (Math.abs(player.body.angularVelocity) < 0.005 && player.body.speed < 0.2) {
             isStopped = true;
         }
     }
 
-    // 當有玩家出局或停止
-    if (isOut || isStopped) {
-        // 判定對手獲勝
-        if (gameState === "battle") {
-            gameState = (player === p1State) ? "p2_win" : "p1_win";
+    if (gameState === "battle" && (isOut || isStopped)) {
+        // 進入 3 秒展演期
+        gameState = "ending";
+        const winnerObj = (player === p1State) ? p2State : p1State;
+        const loserObj = player;
+        const winResult = (player === p1State) ? "p2_win" : "p1_win";
+
+        // 處決敗者
+        if (isOut) {
+            World.remove(engine.world, loserObj.body);
+            loserObj.body = null;
+            loserObj.isFallen = false;
+        } else {
+            loserObj.isFallen = true;
+            Matter.Body.setMass(loserObj.body, loserObj.body.mass * 10);
+            loserObj.body.friction = 0.8;
+            Matter.Body.setAngularVelocity(loserObj.body, 0);
         }
 
-        if (isOut) {
-            World.remove(engine.world, player.body);
-            player.body = null;
-            player.isFallen = false;
-        } else {
-            player.isFallen = true;
-            Matter.Body.setMass(player.body, player.body.mass * 10);
-            player.body.friction = 0.8;
-            Matter.Body.setAngularVelocity(player.body, 0);
+        // 強化勝者 (完全移除阻力，使其優雅地無限自轉)
+        if (winnerObj.body) {
+            winnerObj.body.frictionAir = 0;
+            winnerObj.body.friction = 0;
         }
+
+        // 等待 3 秒後才跳出巨大字卡
+        setTimeout(() => {
+            gameState = winResult;
+        }, 3000);
     }
 }
 
@@ -249,6 +257,12 @@ function drawGame() {
     if (!isTimeFrozen) {
         checkSurvival(p1State);
         checkSurvival(p2State);
+    }
+
+    // 【強制維持勝利者轉速】在展演期間鎖死勝者的旋轉速度
+    if (gameState === "ending" || gameState === "p1_win" || gameState === "p2_win") {
+        if (p1State.body && !p1State.isFallen) Matter.Body.setAngularVelocity(p1State.body, 0.4);
+        if (p2State.body && !p2State.isFallen) Matter.Body.setAngularVelocity(p2State.body, 0.4);
     }
 
     if (isTimeFrozen) {
@@ -312,7 +326,6 @@ function drawGame() {
         ctx.lineWidth = 3;
         ctx.fill();
 
-        // 【視覺強化】畫出內部的太極色塊，讓旋轉超級明顯
         if (pState && !pState.isFallen) {
             ctx.beginPath();
             ctx.arc(0, 0, 24, 0, Math.PI);
@@ -327,7 +340,6 @@ function drawGame() {
         ctx.shadowColor = "transparent";
         ctx.stroke();
 
-        // 頂部立體中心軸
         if (pState && !pState.isFallen) {
             let domeGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 15);
             domeGradient.addColorStop(0, "rgba(255, 255, 255, 0.8)");
@@ -343,7 +355,7 @@ function drawGame() {
 
         ctx.rotate(-body.angle);
         ctx.fillStyle = (pState && pState.isFallen) ? "#888888" : "#ffffff";
-        ctx.font = "bold 20px sans-serif"; // 字體配合陀螺放大
+        ctx.font = "bold 20px sans-serif"; 
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
@@ -368,7 +380,6 @@ function drawGame() {
     requestAnimationFrame(drawGame);
 }
 
-// 介面與勝負結算畫面更新
 function drawUI() {
     ctx.fillStyle = isTimeFrozen ? "#888" : "#aaaaaa";
     ctx.font = "bold 16px sans-serif";
@@ -386,7 +397,6 @@ function drawUI() {
     else p2Txt = p2State.upper ? `已選上卦【${p2State.upper}】，再點選下卦` : "【P2 陣地】下半部雙擊起卦...";
     ctx.fillText(p2Txt, 400, canvas.height - 40);
 
-    // 【新增】巨大化的勝負結算畫面
     if (gameState === "p1_win" || gameState === "p2_win") {
         ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
