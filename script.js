@@ -16,19 +16,21 @@ const ARENA_RADIUS = 380;
 let baguaData = null;
 const baguaKeys = ["乾", "坤", "震", "巽", "坎", "離", "艮", "兌"];
 
-// 狀態機與玩家狀態包 (將 isFallen 改為 isShattered 碎裂狀態)
+// 狀態機與玩家狀態包
 let p1State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false };
 let p2State = { upper: null, lower: null, currentUpper: "", currentLower: "", body: null, isShattered: false };
 let gameState = "wait"; 
+
+// 【新增】碰撞計數器
+let collisionCount = 0; 
 
 let isTimeFrozen = false;
 let freezeTarget = null;
 let freezeText = "";
 let freezeAlpha = 1.0;
 
-// 特效變數
-let particles = []; // 儲存碎裂粒子的陣列
-let screenShake = 0; // 螢幕震動強度
+let particles = []; 
+let screenShake = 0; 
 
 // --- 3. 非同步載入八卦 JSON ---
 fetch('bagua.json')
@@ -59,7 +61,8 @@ canvas.addEventListener('pointerdown', (e) => {
         gameState = "wait";
         p1State.upper = null; p1State.lower = null;
         p2State.upper = null; p2State.lower = null;
-        particles = []; // 清空殘留粒子
+        particles = []; 
+        collisionCount = 0; // 重置碰撞計數
         return; 
     }
 
@@ -95,7 +98,7 @@ function spawnTop(player, x, y, label) {
 
     const up = baguaData[player.upper].upper;
     const lo = baguaData[player.lower].lower;
-    const radius = 85; // 【視覺升級】尺寸放大近兩倍，極致張力
+    const radius = 85; 
 
     let topBody;
     if (up.sides === 0) {
@@ -126,16 +129,17 @@ function spawnTop(player, x, y, label) {
 
     if (p1State.body && !p1State.isShattered && p2State.body && !p2State.isShattered) {
         gameState = "battle";
+        collisionCount = 0; // 開戰時重置計數
     }
 }
 
 // --- 5. 特效系統：產生碎裂粒子 ---
 function createShatterEffect(x, y, colorStr) {
-    screenShake = 35; // 觸發強烈螢幕震動
+    screenShake = 35; 
     for (let i = 0; i < 80; i++) {
         particles.push({
             x: x, y: y,
-            vx: (Math.random() - 0.5) * 35, // 爆炸擴散速度
+            vx: (Math.random() - 0.5) * 35, 
             vy: (Math.random() - 0.5) * 35,
             size: Math.random() * 18 + 4,
             color: colorStr,
@@ -143,7 +147,7 @@ function createShatterEffect(x, y, colorStr) {
             decay: Math.random() * 0.02 + 0.015,
             angle: Math.random() * Math.PI * 2,
             vAngle: (Math.random() - 0.5) * 0.8,
-            type: Math.random() > 0.6 ? 'spark' : 'shard' // 區分火花與實體碎片
+            type: Math.random() > 0.6 ? 'spark' : 'shard' 
         });
     }
 }
@@ -155,8 +159,6 @@ function updateAndDrawParticles() {
         p.y += p.vy;
         p.angle += p.vAngle;
         p.life -= p.decay;
-        
-        // 增加空氣阻力讓碎片稍微減速
         p.vx *= 0.92;
         p.vy *= 0.92;
 
@@ -171,11 +173,11 @@ function updateAndDrawParticles() {
         ctx.globalAlpha = p.life;
 
         if (p.type === 'spark') {
-            ctx.fillStyle = "#ffcc00"; // 明亮的火花
+            ctx.fillStyle = "#ffcc00"; 
             ctx.globalCompositeOperation = "lighter";
             ctx.beginPath(); ctx.arc(0, 0, p.size * 0.4, 0, Math.PI * 2); ctx.fill();
         } else {
-            ctx.fillStyle = p.color; // 本體顏色的幾何碎片
+            ctx.fillStyle = p.color; 
             ctx.beginPath();
             ctx.moveTo(0, -p.size);
             ctx.lineTo(p.size, p.size);
@@ -187,7 +189,7 @@ function updateAndDrawParticles() {
     }
 }
 
-// --- 6. 碰撞事件與時空凝結 ---
+// --- 6. 碰撞事件與計數邏輯 ---
 function setupCollisionListener() {
     Matter.Events.on(engine, 'collisionStart', (event) => {
         if (isTimeFrozen || gameState !== "battle") return;
@@ -200,8 +202,14 @@ function setupCollisionListener() {
                 const speed = pair.collision.speed || 4;
                 const impulse = pair.collision.depth * speed;
 
+                // 只要發生實質碰撞就增加計數器
+                if (impulse > 1.0) {
+                    collisionCount++;
+                }
+
+                // 劇烈碰撞觸發變卦特效
                 if (impulse > 2.5) { 
-                    screenShake = 8; // 劇烈碰撞時給予小震動
+                    screenShake = 8; 
                     const targetBody = Math.random() > 0.5 ? pair.bodyA : pair.bodyB;
                     const targetState = (targetBody.label === "P1") ? p1State : p2State;
                     if (!targetState.isShattered) {
@@ -260,18 +268,35 @@ function applyThrustVector(body, newGua) {
     }
 }
 
-// --- 7. 生存判定：改為「觸碰邊界」或「力竭」直接觸發崩解碎裂 ---
+// --- 7. 生存判定：結界保護系統與碎裂判定 ---
 function checkSurvival(player) {
-    if (!player.body) return;
+    if (!player.body || player.isShattered) return;
 
     const pos = player.body.position;
     const distance = Math.hypot(pos.x - ARENA_CENTER.x, pos.y - ARENA_CENTER.y);
     
-    // 【全新死亡機制】碰觸到邊緣虛空區 (大於競技場半徑減去一點容錯) 就判定碎裂
+    // 【全新機制】判斷是否處於「等待對手」或「前三次碰撞」的保護期內
+    let isProtected = (gameState === "wait") || (gameState === "battle" && collisionCount < 3);
+
+    // 如果在保護期內：鎖血、防滑出界、防停止
+    if (isProtected) {
+        if (distance > (ARENA_RADIUS - 60)) {
+            // 產生一股將陀螺強力推回競技場中心的結界反彈力
+            const pushToCenter = Matter.Vector.normalise({ x: ARENA_CENTER.x - pos.x, y: ARENA_CENTER.y - pos.y });
+            Matter.Body.setVelocity(player.body, Matter.Vector.mult(pushToCenter, 8)); 
+        }
+        if (Math.abs(player.body.angularVelocity) < 0.05) {
+            // 強制補充旋轉動能，維持熱身狀態
+            Matter.Body.setAngularVelocity(player.body, player.body.angularVelocity >= 0 ? 0.2 : -0.2);
+        }
+        return; // 在保護期內絕對不會觸發死亡碎裂
+    }
+
+    // 突破保護期後，開始執行死亡判定
     let isOut = distance > (ARENA_RADIUS - 40);
     let isStopped = false;
 
-    if (gameState === "battle" && p1State.body && p2State.body && !player.isShattered) {
+    if (gameState === "battle" && p1State.body && p2State.body) {
         if (Math.abs(player.body.angularVelocity) < 0.005 && player.body.speed < 0.2) {
             isStopped = true;
         }
@@ -283,14 +308,12 @@ function checkSurvival(player) {
         const loserObj = player;
         const winResult = (player === p1State) ? "p2_win" : "p1_win";
 
-        // 【處決敗者：華麗碎裂】
         loserObj.isShattered = true;
         const colorStr = (loserObj === p1State) ? "#c0392b" : "#2980b9";
         createShatterEffect(loserObj.body.position.x, loserObj.body.position.y, colorStr);
-        World.remove(engine.world, loserObj.body); // 徹底抹除實體，不再留屍體
+        World.remove(engine.world, loserObj.body); 
         loserObj.body = null;
 
-        // 【強化勝者】移除阻力，無限自轉
         if (winnerObj.body) {
             winnerObj.body.frictionAir = 0;
             winnerObj.body.friction = 0;
@@ -314,12 +337,11 @@ function drawGame() {
         if (p2State.body && !p2State.isShattered) Matter.Body.setAngularVelocity(p2State.body, 0.4);
     }
 
-    ctx.save(); // 保存未震動前的狀態
+    ctx.save(); 
 
-    // 【套用螢幕震動】
     if (screenShake > 0) {
         ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
-        screenShake *= 0.85; // 每幀衰減
+        screenShake *= 0.85; 
         if (screenShake < 0.5) screenShake = 0;
     }
 
@@ -346,7 +368,6 @@ function drawGame() {
         ctx.fillStyle = arenaGradient; ctx.fill();
     }
 
-    // 繪製陀螺實體
     const bodies = Composite.allBodies(engine.world);
     bodies.forEach(body => {
         if (body.isStatic) return; 
@@ -365,7 +386,7 @@ function drawGame() {
         ctx.closePath();
 
         ctx.shadowColor = "rgba(0,0,0,0.5)";
-        ctx.shadowBlur = 15; ctx.shadowOffsetY = 8; // 陰影配合放大
+        ctx.shadowBlur = 15; ctx.shadowOffsetY = 8; 
 
         if (isTimeFrozen) {
             ctx.fillStyle = (body === freezeTarget) ? "#f1c40f" : "#444444";
@@ -378,9 +399,8 @@ function drawGame() {
         ctx.lineWidth = 4;
         ctx.fill();
 
-        // 內部自轉紋理同步放大
         if (pState && !pState.isShattered) {
-            ctx.beginPath(); ctx.arc(0, 0, 42, 0, Math.PI); // 24 -> 42
+            ctx.beginPath(); ctx.arc(0, 0, 42, 0, Math.PI); 
             ctx.fillStyle = "rgba(0, 0, 0, 0.25)"; ctx.fill();
             ctx.beginPath(); ctx.arc(0, 0, 42, Math.PI, Math.PI * 2);
             ctx.fillStyle = "rgba(255, 255, 255, 0.25)"; ctx.fill();
@@ -389,20 +409,19 @@ function drawGame() {
         ctx.shadowColor = "transparent";
         ctx.stroke();
 
-        // 頂部立體中心軸放大
         if (pState && !pState.isShattered) {
             let domeGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 25);
             domeGradient.addColorStop(0, "rgba(255, 255, 255, 0.8)");
             domeGradient.addColorStop(1, "rgba(0, 0, 0, 0.3)");
-            ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI * 2); // 15 -> 25
+            ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI * 2); 
             ctx.fillStyle = domeGradient; ctx.fill();
-            ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); // 4 -> 8
+            ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); 
             ctx.fillStyle = "#ffffff"; ctx.fill();
         }
 
         ctx.rotate(-body.angle);
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 32px sans-serif"; // 字體大幅升級 20px -> 32px
+        ctx.font = "bold 32px sans-serif"; 
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
@@ -411,7 +430,6 @@ function drawGame() {
         ctx.restore();
     });
 
-    // 繪製碎裂特效
     updateAndDrawParticles();
 
     if (isTimeFrozen && freezeTarget) {
@@ -426,7 +444,7 @@ function drawGame() {
         freezeAlpha -= 0.012; 
     }
 
-    ctx.restore(); // 結束震動影響範圍
+    ctx.restore(); 
 
     drawUI();
     requestAnimationFrame(drawGame);
@@ -448,6 +466,13 @@ function drawUI() {
     else if (p2State.body) p2Txt = `【P2 陣地】正在對戰: ${p2State.currentUpper}${p2State.currentLower}`;
     else p2Txt = p2State.upper ? `已選上卦【${p2State.upper}】，再點選下卦` : "【P2 陣地】下半部雙擊起卦...";
     ctx.fillText(p2Txt, 400, canvas.height - 40);
+
+    // 【新增】如果還在保護期內，顯示交鋒倒數計時
+    if (gameState === "battle" && collisionCount < 3) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+        ctx.font = "bold 24px sans-serif";
+        ctx.fillText(`試探交鋒期：剩餘 ${3 - collisionCount} 次`, 400, 100);
+    }
 
     if (gameState === "p1_win" || gameState === "p2_win") {
         ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
